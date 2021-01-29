@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: $APP_INSTANCE_NAME-kibana
+  labels:
+    component: $APP_INSTANCE_NAME-kibana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+     component: $APP_INSTANCE_NAME-kibana
+  template:
+    metadata:
+      labels:
+        component: $APP_INSTANCE_NAME-kibana
+    spec:
+      containers:
+      - name: $APP_INSTANCE_NAME-kibana
+        image: docker.elastic.co/kibana/kibana-oss:6.2.2
+        env:
+        - name: CLUSTER_NAME
+          value: $CLUSTER_NAME
+        - name: ELASTICSEARCH_URL
+          value: http://$APP_INSTANCE_NAME-elasticsearch:9200
+        resources:
+          limits:
+            cpu: 200m
+          requests:
+            cpu: 100m
+        ports:
+        - containerPort: 5601
+          name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: $APP_INSTANCE_NAME-kibana
+  annotations:
+    cloud.google.com/load-balancer-type: "Internal"
+  labels:
+    component: $APP_INSTANCE_NAME-kibana
+spec:
+  selector:
+    component: $APP_INSTANCE_NAME-kibana
+  ports:
+  - name: http
+    port: 5601
+  type: LoadBalancer 

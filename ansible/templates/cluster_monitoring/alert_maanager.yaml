@@ -1,0 +1,163 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alertmanager
+
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "$APP_INSTANCE_NAME-alertmanager-config"
+  labels:
+    app.kubernetes.io/name: "$APP_INSTANCE_NAME"
+    app.kubernetes.io/component: alertmanager
+data:
+  # To learn more: https://prometheus.io/docs/alerting/configuration/
+  alertmanager.yml: |
+    global: null
+    receivers:
+    - name: default-receiver
+    route:
+      group_interval: 5m
+      group_wait: 10s
+      receiver: default-receiver
+      repeat_interval: 3h
+
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "$APP_INSTANCE_NAME-alertmanager-operated"
+  labels:
+    app.kubernetes.io/name: "$APP_INSTANCE_NAME"
+    app.kubernetes.io/component: alertmanager
+spec:
+  type: "ClusterIP"
+  clusterIP: None
+  selector:
+    k8s-app: alertmanager
+  ports:
+    - name: mesh
+      # Exposes port 6783 at a cluster-internal IP address
+      port: 6783
+      protocol: TCP
+      # Routes requests to port 6783 of the Alertmanager StatefulSet Pods
+      targetPort: 6783
+    - name: http
+      port: 9093
+      protocol: TCP
+      targetPort: 9093
+
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "$APP_INSTANCE_NAME-alertmanager"
+  labels:
+    k8s-app: alertmanager
+    app.kubernetes.io/name: "$APP_INSTANCE_NAME"
+    app.kubernetes.io/component: alertmanager
+spec:
+  ports:
+    - name: http
+      # Exposes port 9093 at a cluster-internal IP address
+      port: 9093
+      protocol: TCP
+      # Routes requests to port 9093 of the Alertmanager StatefulSet Pods
+      targetPort: 9093
+  selector:
+    k8s-app: alertmanager
+  type: "ClusterIP"
+
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: "$APP_INSTANCE_NAME-alertmanager"
+  labels: &Labels
+    k8s-app: alertmanager
+    app.kubernetes.io/name: "$APP_INSTANCE_NAME"
+    app.kubernetes.io/component: alertmanager
+spec:
+  serviceName: "$APP_INSTANCE_NAME-alertmanager-operated"
+  replicas: 2
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels: *Labels
+  template:
+    metadata:
+      labels: *Labels
+    spec:
+      serviceAccountName: alertmanager
+      containers:
+        - name: prometheus-alertmanager
+          # The Alertmanager container image
+          image: quay.io/prometheus/alertmanager:v0.16.0
+          imagePullPolicy: Always
+          args:
+            - --config.file=/etc/config/alertmanager.yml
+            - --storage.path=/data
+            - --web.listen-address=:9093
+            - --web.route-prefix=/
+            - --cluster.listen-address=$(POD_IP):6783
+            - --cluster.peer=$APP_INSTANCE_NAME-alertmanager-0.$APP_INSTANCE_NAME-alertmanager-operated.$NAMESPACE.svc:6783
+            - --cluster.peer=$APP_INSTANCE_NAME-alertmanager-1.$APP_INSTANCE_NAME-alertmanager-operated.$NAMESPACE.svc:6783
+            - --log.level=debug
+          env:
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                apiVersion: v1
+                fieldPath: status.podIP
+          ports:
+            # Configured for web access
+            - containerPort: 9093
+              name: http
+            # Configured for communication over the mesh
+            - containerPort: 6783
+              name: mesh
+          readinessProbe:
+            httpGet:
+              path: /#/status
+              port: 9093
+            initialDelaySeconds: 30
+            timeoutSeconds: 30
+          volumeMounts:
+            # The ConfigMap containing `alertmanager.yml` will be mounted to `/etc/config`, using a Kubernetes Volume. \
+            - name: config-volume
+              mountPath: /etc/config
+            - name: "$APP_INSTANCE_NAME-alertmanager-data"
+              mountPath: "/data"
+              subPath: ""
+          resources:
+            limits:
+              cpu: 10m
+              memory: 50Mi
+            requests:
+              cpu: 10m
+              memory: 50Mi
+      volumes:
+        - name: config-volume
+          configMap:
+            name: "$APP_INSTANCE_NAME-alertmanager-config"
+      # Configures Pod anti-affinity so that Alertmanager Pods are assigned to different Nodes. 
+      
+  # This volume will be attached at the `/data` path and will be used to store Alertmanager data.
+  volumeClaimTemplates:
+  - metadata:
+      name: "$APP_INSTANCE_NAME-alertmanager-data"
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: "2Gi"
+

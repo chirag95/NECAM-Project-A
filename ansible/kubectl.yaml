@@ -1,0 +1,32 @@
+---
+
+- hosts: localhost
+  connection: local
+
+  environment:
+    APP_INSTANCE_NAME: "{{ app_name }}"
+    NAMESPACE: "{{ NAMESPACE }}"
+    GRAFANA_GENERATED_PASSWORD: "{{ GRAFANA_GENERATED_PASSWORD }}"
+    CLUSTER_NAME: "{{aks_cluster_name}}"
+
+  tasks:
+
+    - name: Get aks credentials
+      shell: az aks get-credentials --resource-group {{resource_group_name}} --name {{aks_cluster_name}} 
+
+
+    - shell: echo $APP_INSTANCE_NAME
+    - shell: echo $NAMESPACE
+    - shell: echo $GRAFANA_GENERATED_PASSWORD
+    - name: replace environment variables in templates
+      shell: awk 'FNR==1 {print "---"}{print}' templates/cluster_monitoring/*  | envsubst '$APP_INSTANCE_NAME $NAMESPACE $GRAFANA_GENERATED_PASSWORD'  > "${APP_INSTANCE_NAME}_cluster_monitoring.yaml"
+    
+    - name: replace environment variables in templates for cluster_logging
+      shell: awk 'FNR==1 {print "---"}{print}' templates/cluster_logging/* | envsubst '$APP_INSTANCE_NAME $CLUSTER_NAME'  > "${APP_INSTANCE_NAME}_cluster_logging.yaml"
+
+    - shell: kubectl apply -f "${APP_INSTANCE_NAME}_cluster_monitoring.yaml" --namespace "${NAMESPACE}" 
+
+    - shell: kubectl apply -f "${APP_INSTANCE_NAME}_cluster_logging.yaml" --namespace "${NAMESPACE}" 
+    - shell: echo $GRAFANA_GENERATED_PASSWORD   
+    
+    - shell: sh templates/backup.sh {{aks_cluster_name}} {{resource_group_name}} {{backup_resource_group}} {{subscription_id}} {{tenant_id}} {{client_id}} {{client_secret}}
